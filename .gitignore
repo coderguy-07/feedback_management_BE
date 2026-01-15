@@ -11,6 +11,8 @@ env/
 
 # Database (except when explicitly tracked as per user request)
 *.db-journal
+*.db
+database.db
 
 # Logs
 logs/

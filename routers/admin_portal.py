@@ -7,7 +7,7 @@ import io
 import csv
 
 from core.database import get_session
-from models import Feedback, AdminUser, ReviewHistory, FOMapping
+from models import Feedback, AdminUser, ReviewHistory, FOMapping, UserROMapping
 from models_refactor import Branch
 from services.auth_service import get_current_admin
 from schemas.schemas import DashboardStats, ChartData, PieChartData, WorkflowUpdate
@@ -18,18 +18,12 @@ router = APIRouter(prefix="/api", tags=["admin-portal"])
 
 def apply_rbac(query, user: AdminUser):
     """Applies Role-Based Access Control filters to the query."""
-    if user.role == "superuser":
+    if user.role == "superuser" or user.role == "Vendor":
         return query
-    elif user.role == "DO":
-        # DO sees feedbacks from ANY branch associated with their city.
-        # This includes branches having ROs OR FOs in that city.
-        # We find all branch codes where at least one user (RO or FO) exists in this city.
-        branch_codes_sub = select(AdminUser.branch_code).where(AdminUser.city == user.city)
-        return query.where(Feedback.ro_number.in_(branch_codes_sub))
-    elif user.role == "FO":
-        # FO Manages multiple ROs via FOMapping table
-        # Subquery to get all RO codes assigned to this FO
-        sub = select(FOMapping.ro_code).where(FOMapping.fo_username == user.username)
+    elif user.role in ["DO", "FO", "DRSM", "SRH"]:
+        # Unified mapping logic for all hierarchy levels
+        # Checks the user_ro_mapping table for assigned ROs
+        sub = select(UserROMapping.ro_code).where(UserROMapping.username == user.username)
         return query.where(Feedback.ro_number.in_(sub))
     else:
         # RO (or default admin) sees their branch
@@ -91,7 +85,7 @@ def verify_feedback_access(session: Session, feedback: Feedback, user: AdminUser
     Verifies if the user has access to the specific feedback item.
     Returns True if accessible, False otherwise.
     """
-    if user.role == "superuser":
+    if user.role == "superuser" or user.role == "Vendor":
         return True
     elif user.role == "DO":
         # Check if feedback belongs to DO's city
@@ -470,23 +464,45 @@ async def update_workflow_status(
     new_status = payload.status
     old_status = feedback.workflow_status
     
-    if current_user.role == "RO":
-        # RO can only move Pending -> RO Verified
-        if old_status == "Pending" and new_status == "RO Verified":
-            feedback.workflow_status = "RO Verified"
-            feedback.status = "Reviewed" # Update high level status
-        else:
-            raise HTTPException(status_code=400, detail="Invalid transition for RO. Can only Verify pending items.")
+    # Global Reject Handler
+    if new_status == "Rejected":
+         if current_user.role in ["Vendor", "superuser", "DO"]:
+              feedback.workflow_status = "Rejected"
+              feedback.status = "Rejected"
+              session.add(feedback)
+              session.commit()
+              session.refresh(feedback)
+              return {"success": True, "message": "Feedback Rejected"}
+         else:
+              raise HTTPException(status_code=403, detail="Only Vendor or DO can reject feedback.")
 
+    # --- New Workflow: Vendor -> DO -> FO -> DO ---
+    
+    # 1. Vendor Step
+    if current_user.role == "Vendor" or current_user.role == "superuser":
+        # Vendor moves Pending -> Vendor Verified
+        if new_status == "Vendor Verified":
+            feedback.workflow_status = "Vendor Verified"
+            feedback.status = "Reviewed" 
+        else:
+            # Allow superuser to force other states if needed, but stricter for Vendor
+            feedback.workflow_status = new_status
+            if payload.assignedTo:
+                feedback.assigned_fo_id = payload.assignedTo
+
+    # 2. DO Step (Two Interaction Points)
     elif current_user.role == "DO":
-        if new_status == "DO Verified":
-             # DO Verifies -> Auto Assignment Logic
-             if old_status != "RO Verified" and old_status != "Pending": # Allow DO to pick up Pending too? Strict: RO Verified.
-                 # Let's be flexible: Pending OR RO Verified -> DO Verified
-                 pass
+        # Interaction A: Vendor Verified -> Assigned (Assign to FO)
+        if new_status == "Assigned":
+             if old_status != "Vendor Verified":
+                 raise HTTPException(status_code=400, detail="DO can only assign feedback after Vendor verification.")
              
-             # Check for FO
-             stmt = select(AdminUser.id).join(FOMapping, FOMapping.fo_username == AdminUser.username).where(FOMapping.ro_code == feedback.ro_number)
+             # Auto-Assignment Logic
+             # Find FO mapped to this RO using the new UserROMapping table
+             stmt = select(AdminUser.id).join(UserROMapping, UserROMapping.username == AdminUser.username).where(
+                 UserROMapping.ro_code == feedback.ro_number,
+                 UserROMapping.role == "FO"
+             )
              fo_id = session.exec(stmt).first()
              
              if fo_id:
@@ -494,33 +510,45 @@ async def update_workflow_status(
                  feedback.assigned_fo_id = fo_id
                  feedback.status = "Verified"
              else:
-                 # No FO found? Stay at DO Verified? Or error?
-                 # Assuming requirement "Automatically gets assigned", if fail -> error/warning.
-                 feedback.workflow_status = "DO Verified" # Fallback if no FO
-                 feedback.status = "Verified"
-                 
-        elif new_status == "Closed":
-             if old_status == "Resolved":
-                 feedback.workflow_status = "Closed"
-                 feedback.status = "Verified"
-             else:
-                  raise HTTPException(status_code=400, detail="Can only Close resolved tickets.")
-        else:
-             raise HTTPException(status_code=400, detail="Invalid transition for DO")
+                 # Fallback if no FO is mapped
+                 logger.warning(f"No FO mapped for RO {feedback.ro_number}. Updating to DO Verified instead.")
+                 feedback.workflow_status = "DO Verified" # Intermediate state if no FO? Or keep as Vendor Verified? 
+                 # Let's fail or allow manual assignment? 
+                 # For now, let's allow it but warn.
+                 # Actually, expectation is "Assigned to respective FO". 
+                 if payload.assignedTo: # Allow manual override
+                     feedback.assigned_fo_id = payload.assignedTo
+                     feedback.workflow_status = "Assigned"
+                 else:
+                     raise HTTPException(status_code=400, detail=f"No Field Officer found mapped to RO {feedback.ro_number}. Please check mappings.")
 
+        # Interaction B: Action Taken -> Resolved (Final Closure)
+        elif new_status == "Resolved":
+             if old_status != "Action Taken": # Should strictly follow FO action
+                  # Maybe allow bypassing FO if needed? "Action Taken" or "Assigned" (if FO did it offline)
+                  pass 
+             
+             feedback.workflow_status = "Resolved"
+             feedback.status = "Resolved"
+        
+        else:
+             raise HTTPException(status_code=400, detail="Invalid transition for DO. Valid: Assign (from Vendor Verified) or Resolve (from Action Taken).")
+
+    # 3. FO Step
     elif current_user.role == "FO":
         if feedback.assigned_fo_id != current_user.id:
             raise HTTPException(status_code=403, detail="Not assigned to this task")
             
-        if new_status == "Resolved":
-            feedback.workflow_status = "Resolved"
+        if new_status == "Action Taken":
+            feedback.workflow_status = "Action Taken"
+            # Keep overall status as Verified or Change to In Progress?
+            # Let's keep as Verified.
         else:
-             raise HTTPException(status_code=400, detail="Invalid transition for FO")
+             raise HTTPException(status_code=400, detail="Invalid transition for FO. Can only mark as 'Action Taken'.")
              
-    elif current_user.role == "superuser":
-        feedback.workflow_status = new_status
-        if payload.assignedTo:
-            feedback.assigned_fo_id = payload.assignedTo
+    else:
+        # RO or others?
+        raise HTTPException(status_code=403, detail="Unauthorized role for this workflow.")
 
     session.add(feedback)
     session.commit()
@@ -565,7 +593,7 @@ async def get_filter_options(
         query = query.where(Branch.ro_code.in_(sub))
         
     results = session.exec(query).all()
-    statuses = ["Pending", "Reviewed", "Verified", "Rejected", "Not Verified"]
+    statuses = ["Pending", "Vendor Verified", "Assigned", "Action Taken", "Resolved", "Rejected"]
     
     ro_options = []
     for branch in results:

@@ -89,7 +89,8 @@ Check the `scripts/` directory for maintenance tools:
 - `generate_hash.py`: Located in `services/`. Run via `python -m services.generate_hash` to generate password hashes.
 
 ## 🔑 Key Features
-- **Role-Based Access Control (RBAC)**: Support for Superuser, District Officer (DO), Retail Outlet (RO), and Field Officer (FO).
+- **Role-Based Access Control (RBAC)**: Support for Superuser, SRH, DRSM, DO, FO, and RO.
+- **Excel User Onboarding**: Bulk upload users with full 5-level hierarchy (SRH -> DRSM -> DO -> FO -> RO) mapping.
 - **Automated Reporting**: Daily PDF reports sent via email.
 - **WhatsApp Integration**: Bi-directional communication for feedback collection.
-- **Visual Analytics**: Admin dashboard with trend charts and rating distributions.
+- **Visual Analytics**: Admin dashboard with trend charts, hierarchy views, and rating distributions.

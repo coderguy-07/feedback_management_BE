@@ -50,7 +50,7 @@ def main():
                     id=str(uuid.uuid4()),
                     username=username,
                     email=f"{username}@example.com", # Placeholder
-                    password_hash=settings_pwd_hash,
+                    password_hash=get_password_hash("DO123"),
                     full_name=do_name,
                     branch_code="DO_OFFICE", # Generic
                     role="DO",
@@ -83,7 +83,7 @@ def main():
                     id=str(uuid.uuid4()),
                     username=username,
                     email=fo_email if pd.notna(fo_email) else f"{username}@example.com",
-                    password_hash=settings_pwd_hash,
+                    password_hash=get_password_hash("FO123"),
                     full_name=fo_name,
                     branch_code="FO_CLUSTER", # Placeholder, mapping table handles real link
                     role="FO",

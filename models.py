@@ -29,7 +29,7 @@ class Feedback(SQLModel, table=True):
     status: str = Field(default="Pending", index=True)
     
     # Workflow fields
-    workflow_status: str = Field(default="Pending", index=True) # Pending -> Escalated -> Assigned -> Resolved -> Closed
+    workflow_status: str = Field(default="Pending", index=True) # Pending -> Vendor Verified -> Assigned -> Action Taken -> Resolved
     assigned_fo_id: Optional[str] = Field(default=None, index=True)
 
     reviewed: bool = Field(default=False, index=True)
@@ -62,6 +62,13 @@ class ReviewHistory(SQLModel, table=True):
     reviewed_at: datetime = Field(default_factory=datetime.utcnow)
     reviewed_at: datetime = Field(default_factory=datetime.utcnow)
     comments: Optional[str] = None
+
+class UserROMapping(SQLModel, table=True):
+    __tablename__ = "user_ro_mapping"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True) # The user (SRH, DRSM, DO, FO)
+    role: str = Field(index=True)     # "SRH", "DRSM", "DO", "FO" - helper for queries
+    ro_code: str = Field(index=True)  # The RO they have access to
 
 class FOMapping(SQLModel, table=True):
     __tablename__ = "fo_mapping"
@@ -97,6 +104,8 @@ class FeedbackRead(SQLModel):
     # Review fields
     reviewed_at: Optional[datetime] = None
     reviewed_by: Optional[str] = None
+    workflow_status: Optional[str] = "Pending"
+    assigned_fo_id: Optional[str] = None
 
 class SurveyListRead(SQLModel):
     id: int
