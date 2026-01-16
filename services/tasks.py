@@ -201,9 +201,12 @@ async def send_email_report(filename):
         logger.warning("Email configuration missing. Skipping email report.")
         return
 
+    # Support multiple recipients (comma-separated)
+    recipients = [email.strip() for email in settings.MAIL_TO.split(',')] if settings.MAIL_TO else []
+    
     message = MessageSchema(
         subject="Daily Feedback Report",
-        recipients=[settings.MAIL_TO], 
+        recipients=recipients, 
         body="Attached is the daily feedback report.",
         subtype=MessageType.html,
         attachments=[filename]
@@ -307,9 +310,12 @@ async def send_immediate_negative_report(feedback_id: int):
                     logger.warning("Email configuration missing. Skipping immediate negative report.")
                     return
 
+                # Support multiple recipients (comma-separated)
+                recipients = [email.strip() for email in settings.MAIL_TO.split(',')] if settings.MAIL_TO else []
+                
                 message = MessageSchema(
                     subject="URGENT: Negative Feedback Received",
-                    recipients=[settings.MAIL_TO], 
+                    recipients=recipients, 
                     body=html_body,
                     subtype=MessageType.html,
                     attachments=[filename]

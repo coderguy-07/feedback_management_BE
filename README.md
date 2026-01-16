@@ -26,7 +26,8 @@ Backend/
 │   └── generate_hash.py # Password hash generator utility
 ├── schemas/            # Pydantic Data Models (DTOs)
 ├── scripts/            # Utility and maintenance scripts
-├── models.py           # SQLModel Database Entities
+├── models.py           # SQLModel Database Entities (Feedback, Admin Users)
+├── models_refactor.py  # Extended Database Models (Branch/RO management)
 └── main.py             # Application Entry Point
 ```
 
@@ -54,7 +55,7 @@ MAIL_FROM=your_email@example.com
 MAIL_PORT=587
 MAIL_SERVER=smtp.gmail.com
 MAIL_FROM_NAME=Feedback System
-MAIL_TO=admin@example.com
+MAIL_TO=admin@example.com  # For multiple recipients: email1@example.com,email2@example.com,email3@example.com
 
 # WhatsApp (Optional)
 ENABLE_WHATSAPP=True
