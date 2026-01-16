@@ -5,6 +5,7 @@ import io
 from sqlmodel import Session, select
 from core.security import get_password_hash
 from models import AdminUser, UserROMapping, FOMapping
+from models_refactor import Branch
 
 def sanitize_username(name):
     """Converts 'Pratik Agarwal' to 'pratik_agarwal'."""
@@ -74,6 +75,41 @@ def process_ro_excel_upload(file_content: bytes, session: Session):
     for _, row in df.iterrows():
         ro_code = str(row['RO Code'])
         if not ro_code or pd.isna(ro_code): continue
+
+        # STEP 0: Create/Update Branch record (for branch_management view)
+        ro_name = row.get('RO Name', ro_code)
+        do_name_raw = row.get('Do Name', '')
+        
+        # Extract city from DO name (e.g., "Mumbai DO" -> "Mumbai")
+        city = "Unknown"
+        if pd.notna(do_name_raw) and str(do_name_raw).strip():
+            city = str(do_name_raw).replace(' DO', '').strip()
+        
+        # Extract region from DRSM name if available
+        region = None
+        drsm_name_raw = row.get('DRSM Name')
+        if pd.notna(drsm_name_raw):
+            region = str(drsm_name_raw).strip()
+        
+        # Check if Branch already exists
+        existing_branch = session.get(Branch, ro_code)
+        if not existing_branch:
+            # Create new Branch
+            branch = Branch(
+                ro_code=ro_code,
+                name=str(ro_name) if pd.notna(ro_name) else ro_code,
+                city=city,
+                region=region
+            )
+            session.add(branch)
+        else:
+            # Update existing Branch (in case details changed)
+            if pd.notna(ro_name):
+                existing_branch.name = str(ro_name)
+            existing_branch.city = city
+            if region:
+                existing_branch.region = region
+            session.add(existing_branch)
 
         # PURELY ADDITIVE - No deletes, just add new mappings
         # Skip if mapping already exists to avoid duplicates
@@ -160,9 +196,10 @@ def process_ro_excel_upload(file_content: bytes, session: Session):
         session.commit()
         return {
             "success": True, 
-            "message": f"Successfully processed {len(df)} rows. Created/Updated {count_users} users. "
+            "message": f"Successfully processed {len(df)} rows. Created/Updated {count_users} users and {count_mappings} Branch records. "
                        f"Added new mappings for {count_mappings} RO codes. "
-                       f"All existing mappings preserved (purely additive).",
+                       f"All existing data preserved (purely additive). "
+                       f"Branch management and hierarchy views updated.",
             "rows_processed": len(df),
             "users_created_updated": count_users,
             "ro_codes_processed": count_mappings
