@@ -35,17 +35,6 @@ def process_ro_excel_upload(file_content: bytes, session: Session):
     count_users = 0
     count_mappings = 0
 
-    # We will clear existing UserROMapping to ensure clean state? 
-    # Or just upsert?
-    # For bulk onboarding, full replacement is often safer for consistency, 
-    # but let's try to be additive or cautious. 
-    # User requested "Onboard these users", implying addition/update.
-    # However, mappings can become stale. Let's delete mappings for the users we process?
-    # Or clear all? Let's clear all UserROMappings for safety as this file is usually the master source.
-    session.exec(UserROMapping.__table__.delete())
-    # Also clear FOMapping to keep them in sync if we are transitioning?
-    session.exec(FOMapping.__table__.delete())
-
     # Helper to upsert user
     def upsert_user(name, email, role, branch_code_prefix):
         nonlocal count_users
@@ -77,10 +66,22 @@ def process_ro_excel_upload(file_content: bytes, session: Session):
             session.add(user)
         return username
 
+    # Iterate rows - Process each RO code individually
+    # Delete mappings ONLY for RO codes in this upload (selective update)
+    # This preserves existing mappings for other RO codes
+
     # Iterate rows
     for _, row in df.iterrows():
         ro_code = str(row['RO Code'])
         if not ro_code or pd.isna(ro_code): continue
+
+        # Delete existing mappings ONLY for this specific RO code
+        # This prevents duplicates while preserving other RO codes
+        session.exec(
+            select(UserROMapping).where(UserROMapping.ro_code == ro_code)
+        ).all()  # First fetch to ensure they exist in session
+        session.query(UserROMapping).filter(UserROMapping.ro_code == ro_code).delete()
+        session.query(FOMapping).filter(FOMapping.ro_code == ro_code).delete()
 
         # 1. FO
         fo_name = row.get('FO Name')
@@ -129,7 +130,12 @@ def process_ro_excel_upload(file_content: bytes, session: Session):
         session.commit()
         return {
             "success": True, 
-            "message": f"Processed {len(df)} rows. Created/Updated {count_users} users. Mappings refreshed."
+            "message": f"Successfully processed {len(df)} rows. Created/Updated {count_users} users. "
+                       f"Updated mappings for {count_mappings} RO codes. "
+                       f"Existing mappings for other RO codes preserved.",
+            "rows_processed": len(df),
+            "users_created_updated": count_users,
+            "ro_codes_updated": count_mappings
         }
     except Exception as e:
         session.rollback()

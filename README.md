@@ -91,7 +91,8 @@ Check the `scripts/` directory for maintenance tools:
 
 ## 🔑 Key Features
 - **Role-Based Access Control (RBAC)**: Support for Superuser, SRH, DRSM, DO, FO, and RO.
-- **Excel User Onboarding**: Bulk upload users with full 5-level hierarchy (SRH -> DRSM -> DO -> FO -> RO) mapping.
-- **Automated Reporting**: Daily PDF reports sent via email.
+- **Excel User Onboarding**: Bulk upload users with full 5-level hierarchy (SRH -> DRSM -> DO -> FO -> RO) mapping. 
+  - **Additive Updates**: New uploads only update RO codes in the file, preserving existing mappings for other RO codes.
+- **Automated Reporting**: Daily PDF reports sent via email (supports multiple recipients).
 - **WhatsApp Integration**: Bi-directional communication for feedback collection.
 - **Visual Analytics**: Admin dashboard with trend charts, hierarchy views, and rating distributions.
