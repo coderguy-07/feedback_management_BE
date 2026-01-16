@@ -75,13 +75,8 @@ def process_ro_excel_upload(file_content: bytes, session: Session):
         ro_code = str(row['RO Code'])
         if not ro_code or pd.isna(ro_code): continue
 
-        # Delete existing mappings ONLY for this specific RO code
-        # This prevents duplicates while preserving other RO codes
-        session.exec(
-            select(UserROMapping).where(UserROMapping.ro_code == ro_code)
-        ).all()  # First fetch to ensure they exist in session
-        session.query(UserROMapping).filter(UserROMapping.ro_code == ro_code).delete()
-        session.query(FOMapping).filter(FOMapping.ro_code == ro_code).delete()
+        # PURELY ADDITIVE - No deletes, just add new mappings
+        # Skip if mapping already exists to avoid duplicates
 
         # 1. FO
         fo_name = row.get('FO Name')
@@ -89,40 +84,75 @@ def process_ro_excel_upload(file_content: bytes, session: Session):
         fo_user = upsert_user(fo_name, fo_email, "FO", "FO")
         
         if fo_user:
-            # Add to UserROMapping
-            session.add(UserROMapping(username=fo_user, role="FO", ro_code=ro_code))
-            # Keep FOMapping for backward compatibility (test script etc)
-            # Find DO for legacy FOMapping.do_email
-            # We need do_user first
-            pass
+            # Check if mapping already exists
+            existing = session.exec(
+                select(UserROMapping).where(
+                    UserROMapping.username == fo_user,
+                    UserROMapping.role == "FO",
+                    UserROMapping.ro_code == ro_code
+                )
+            ).first()
+            if not existing:
+                session.add(UserROMapping(username=fo_user, role="FO", ro_code=ro_code))
 
         # 2. DO
         do_name = row.get('Do Name')
         do_user = upsert_user(do_name, None, "DO", "DO")
         if do_user:
-             session.add(UserROMapping(username=do_user, role="DO", ro_code=ro_code))
+            existing = session.exec(
+                select(UserROMapping).where(
+                    UserROMapping.username == do_user,
+                    UserROMapping.role == "DO",
+                    UserROMapping.ro_code == ro_code
+                )
+            ).first()
+            if not existing:
+                session.add(UserROMapping(username=do_user, role="DO", ro_code=ro_code))
 
         # 3. DRSM
         drsm_name = row.get('DRSM Name')
         drsm_email = row.get('DRSM EMAIL')
         drsm_user = upsert_user(drsm_name, drsm_email, "DRSM", "DRSM")
         if drsm_user:
-             session.add(UserROMapping(username=drsm_user, role="DRSM", ro_code=ro_code))
+            existing = session.exec(
+                select(UserROMapping).where(
+                    UserROMapping.username == drsm_user,
+                    UserROMapping.role == "DRSM",
+                    UserROMapping.ro_code == ro_code
+                )
+            ).first()
+            if not existing:
+                session.add(UserROMapping(username=drsm_user, role="DRSM", ro_code=ro_code))
 
         # 4. SRH
         srh_name = row.get('SRH Name')
         srh_email = row.get('SRH EMAIL')
         srh_user = upsert_user(srh_name, srh_email, "SRH", "SRH")
         if srh_user:
-             session.add(UserROMapping(username=srh_user, role="SRH", ro_code=ro_code))
+            existing = session.exec(
+                select(UserROMapping).where(
+                    UserROMapping.username == srh_user,
+                    UserROMapping.role == "SRH",
+                    UserROMapping.ro_code == ro_code
+                )
+            ).first()
+            if not existing:
+                session.add(UserROMapping(username=srh_user, role="SRH", ro_code=ro_code))
 
-        # Legacy FOMapping Sync
+        # Legacy FOMapping Sync (also check for duplicates)
         if fo_user and do_user:
-            session.add(FOMapping(
-                fo_username=fo_user,
-                ro_code=ro_code,
-                do_email=f"{do_user}@example.com"
-            ))
+            existing_fo_mapping = session.exec(
+                select(FOMapping).where(
+                    FOMapping.fo_username == fo_user,
+                    FOMapping.ro_code == ro_code
+                )
+            ).first()
+            if not existing_fo_mapping:
+                session.add(FOMapping(
+                    fo_username=fo_user,
+                    ro_code=ro_code,
+                    do_email=f"{do_user}@example.com"
+                ))
             
         count_mappings += 1
 
@@ -131,11 +161,11 @@ def process_ro_excel_upload(file_content: bytes, session: Session):
         return {
             "success": True, 
             "message": f"Successfully processed {len(df)} rows. Created/Updated {count_users} users. "
-                       f"Updated mappings for {count_mappings} RO codes. "
-                       f"Existing mappings for other RO codes preserved.",
+                       f"Added new mappings for {count_mappings} RO codes. "
+                       f"All existing mappings preserved (purely additive).",
             "rows_processed": len(df),
             "users_created_updated": count_users,
-            "ro_codes_updated": count_mappings
+            "ro_codes_processed": count_mappings
         }
     except Exception as e:
         session.rollback()
