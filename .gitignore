@@ -30,3 +30,19 @@ htmlcov/
 # Temporary
 scratch/
 tmp/
+*_result.txt
+*_results.txt
+lint_*.txt
+
+# Reports
+report_*.pdf
+urgent_report_*.pdf
+
+
+# Environment Variables
+.env
+
+# Data Files (Excel/CSV uploads containing PII)
+*.xlsx
+*.xls
+*.csv

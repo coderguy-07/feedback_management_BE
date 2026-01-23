@@ -272,21 +272,21 @@ async def update_user(
     
     if target_role == "RO":
         existing = session.exec(select(AdminUser).where(
-            AdminUser.branch_code == target_branch,
+            AdminUser.branch_code == target_branch_code,
             AdminUser.role == "RO",
             AdminUser.id != id
         )).first()
         if existing:
-            raise HTTPException(status_code=400, detail=f"An RO already exists for branch {target_branch}.")
+            raise HTTPException(status_code=400, detail=f"An RO already exists for branch {target_branch_code}.")
 
     if target_role == "FO":
         existing = session.exec(select(AdminUser).where(
-            AdminUser.branch_code == target_branch,
+            AdminUser.branch_code == target_branch_code,
             AdminUser.role == "FO",
             AdminUser.id != id
         )).first()
         if existing:
-            raise HTTPException(status_code=400, detail=f"An FO already exists for branch {target_branch}.")
+            raise HTTPException(status_code=400, detail=f"An FO already exists for branch {target_branch_code}.")
 
     if user_in.email:
         user.email = user_in.email

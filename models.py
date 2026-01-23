@@ -60,7 +60,7 @@ class ReviewHistory(SQLModel, table=True):
     old_status: Optional[str] = None
     new_status: Optional[str] = None
     reviewed_at: datetime = Field(default_factory=datetime.utcnow)
-    reviewed_at: datetime = Field(default_factory=datetime.utcnow)
+
     comments: Optional[str] = None
 
 class UserROMapping(SQLModel, table=True):

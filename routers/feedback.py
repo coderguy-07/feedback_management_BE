@@ -44,34 +44,49 @@ async def submit_feedback(
         if rating_air is None and rating_washroom is None and rating_water is None:
             raise HTTPException(status_code=400, detail="At least one rating (Air, Washroom, or Water) is required")
 
-        # Validation: Phone Number (Basic Length/Digit Check)
-        # Allow +, spaces, dashes, but ensure at least 10 digits
+        # Validation: Phone Number
         import re
         clean_phone = re.sub(r'\D', '', phone)
         if len(clean_phone) < 10 or len(clean_phone) > 15:
              raise HTTPException(status_code=400, detail="Invalid phone number format")
 
-        # Read file bytes
-        photo_air_bytes = await photo_air.read() if photo_air else None
-        photo_washroom_bytes = await photo_washroom.read() if photo_washroom else None
-        photo_water_bytes = await photo_water.read() if photo_water else None
-        photo_receipt_bytes = await photo_receipt.read() if photo_receipt else None
+        MAX_FILE_SIZE = 5 * 1024 * 1024 # 5MB
 
-        # Validation: File Size (5MB limit)
-        MAX_FILE_SIZE = 5 * 1024 * 1024
-        if (photo_air_bytes and len(photo_air_bytes) > MAX_FILE_SIZE) or \
-           (photo_washroom_bytes and len(photo_washroom_bytes) > MAX_FILE_SIZE) or \
-           (photo_water_bytes and len(photo_water_bytes) > MAX_FILE_SIZE) or \
-           (photo_receipt_bytes and len(photo_receipt_bytes) > MAX_FILE_SIZE):
-            raise HTTPException(status_code=413, detail="File size exceeds 5MB limit")
+        async def read_and_validate(file: UploadFile | None):
+            if not file:
+                return None
+            
+            # 1. DoS Protection: Read only up to MAX + 1 bytes
+            content = await file.read(MAX_FILE_SIZE + 1)
+            if len(content) > MAX_FILE_SIZE:
+                raise HTTPException(status_code=413, detail=f"File {file.filename} exceeds 5MB limit")
+            
+            # 2. Key Magic Bytes Check (Security)
+            # JPEG: FF D8 FF
+            # PNG: 89 50 4E 47
+            # PDF: 25 50 44 46 (%PDF)
+            
+            thumb = content[:4]
+            is_valid = False
+            if thumb.startswith(b'\xff\xd8\xff'): is_valid = True # JPEG
+            elif thumb.startswith(b'\x89PNG'): is_valid = True # PNG
+            elif thumb.startswith(b'%PDF'): is_valid = True # PDF
+            
+            if not is_valid:
+                 # Fallback: Trust content type ONLY if magic check fails? 
+                 # Or strict mode? Let's be strict for security as requested.
+                 # But valid simple text files or others shouldn't be here.
+                 # User uploaded image/pdf.
+                 # Let's log warning and reject.
+                 logger.warning(f"Invalid file signature for {file.filename}. Header: {thumb.hex()}")
+                 raise HTTPException(status_code=415, detail="Invalid file type. Only JPG, PNG, and PDF allowed.")
 
-        # Validation: File Type
-        ALLOWED_TYPES = ["image/jpeg", "image/png", "application/pdf"]
-        if (photo_air and photo_air.content_type not in ALLOWED_TYPES) or \
-           (photo_washroom and photo_washroom.content_type not in ALLOWED_TYPES) or \
-           (photo_water and photo_water.content_type not in ALLOWED_TYPES) or \
-           (photo_receipt and photo_receipt.content_type not in ALLOWED_TYPES):
-             raise HTTPException(status_code=415, detail="Invalid file type")
+            return content
+
+        photo_air_bytes = await read_and_validate(photo_air)
+        photo_washroom_bytes = await read_and_validate(photo_washroom)
+        photo_water_bytes = await read_and_validate(photo_water)
+        photo_receipt_bytes = await read_and_validate(photo_receipt)
 
         # Resolve Branch Code
         final_ro_code = ro_number or source_id or settings.DEFAULT_RO_NUMBER
@@ -113,7 +128,7 @@ async def submit_feedback(
         if rating_air == 1 or rating_washroom == 1 or rating_water == 1:
             background_tasks.add_task(send_immediate_negative_report, feedback.id)
         
-        # Return response without raw bytes to avoid serialization errors
+        # Return response without raw bytes
         from models import FeedbackRead
         return FeedbackRead(
             id=feedback.id,
@@ -129,7 +144,7 @@ async def submit_feedback(
             feedback_method=feedback.feedback_method,
             session_id=feedback.session_id,
             created_at=feedback.created_at,
-            photo_air=None, # Do not return raw bytes
+            photo_air=None,
             photo_washroom=None,
             photo_receipt=None
         )
@@ -137,8 +152,7 @@ async def submit_feedback(
         raise
     except Exception as e:
         logger.error(f"Error submitting feedback: {e}")
-        with open("error_log.txt", "w") as f:
-            f.write(str(e))
+        # Secure logging instead of local file write
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 from fastapi.responses import Response
@@ -158,11 +172,22 @@ async def get_feedback_image(
         image_data = feedback.photo_air
     elif image_type == "washroom":
         image_data = feedback.photo_washroom
+    elif image_type == "water":
+        image_data = feedback.photo_water
     elif image_type == "receipt":
         image_data = feedback.photo_receipt
+    else:
+        raise HTTPException(status_code=400, detail="Invalid image type")
     
     if not image_data:
         raise HTTPException(status_code=404, detail="Image not found")
+    
+    # Detect MIME type from magic bytes
+    mime_type = "image/jpeg"  # default
+    if len(image_data) >= 4:
+        if image_data[:4] == b'\\x89PNG':
+            mime_type = "image/png"
+        elif image_data[:4] == b'%PDF':
+            mime_type = "application/pdf"
         
-    # Defaulting to image/jpeg, browsers usually sniff content type correctly anyway
-    return Response(content=image_data, media_type="image/jpeg")
+    return Response(content=image_data, media_type=mime_type)

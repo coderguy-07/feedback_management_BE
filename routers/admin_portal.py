@@ -621,6 +621,9 @@ async def export_csv(
     status: Optional[str] = None,
     startDate: Optional[str] = None,
     endDate: Optional[str] = None,
+    timezone_offset: int = 0, # Offset in minutes (e.g., -330 for IST +5:30) - Client should send negated offset from JS usually 
+    # Or simplified: User sends expected offset to ADD to UTC.
+    # Let's assume user sends "minutes to add to UTC". IST = 330.
     session: Session = Depends(get_session),
     current_user: AdminUser = Depends(get_current_admin)
 ):
@@ -628,23 +631,40 @@ async def export_csv(
     
     dt_start = None
     dt_end = None
-    if startDate:
-        dt_start = datetime.fromisoformat(startDate.replace('Z', '')) if 'T' in startDate else datetime.strptime(startDate, "%Y-%m-%d")
-    if endDate:
-        dt_end = datetime.fromisoformat(endDate.replace('Z', '')) if 'T' in endDate else datetime.strptime(endDate, "%Y-%m-%d")
-        if 'T' not in endDate:
-            dt_end = dt_end + timedelta(days=1) - timedelta(seconds=1) 
-            
+    # Fix robust date parsing
+    try:
+        if startDate:
+            # Handle YYYY-MM-DD or ISO
+            clean_date = startDate.split('T')[0]
+            dt_start = datetime.strptime(clean_date, "%Y-%m-%d")
+        
+        if endDate:
+            clean_date = endDate.split('T')[0]
+            dt_end = datetime.strptime(clean_date, "%Y-%m-%d")
+            # Set to end of day
+            dt_end = dt_end.replace(hour=23, minute=59, second=59)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
     query = apply_common_filters(query, current_user, roCode, status, dt_start, dt_end)
         
     query = query.order_by(Feedback.created_at.desc())
     feedbacks = session.exec(query).all()
     
+    def adjust_time(dt_utc):
+        if not dt_utc: return ""
+        # Adjust UTC to Target Timezone
+        # timezone_offset is in minutes to ADD
+        # e.g. IST is +5:30 -> +330 minutes
+        adjusted = dt_utc + timedelta(minutes=timezone_offset)
+        return adjusted.strftime('%Y-%m-%d %H:%M')
+
     def iter_csv(data):
         output = io.StringIO()
         writer = csv.writer(output)
         
-        writer.writerow(['ID', 'Date', 'Phone Number', 'RO Code', 'Free Air Rating', 'Washroom Rating', 'Comments', 'Status', 'Reviewed By'])
+        # Add 'Drinking Water Rating' to header
+        writer.writerow(['ID', 'Date', 'Phone Number', 'RO Code', 'Free Air Rating', 'Washroom Rating', 'Drinking Water Rating', 'Comments', 'Status', 'Reviewed By'])
         yield output.getvalue()
         output.seek(0)
         output.truncate(0)
@@ -652,11 +672,12 @@ async def export_csv(
         for f in data:
             writer.writerow([
                 f.id,
-                f.created_at.isoformat(),
+                adjust_time(f.created_at), # Dynamic Time
                 f.phone,
                 f.ro_number or 'N/A',
                 f.rating_air,
                 f.rating_washroom,
+                f.rating_water, # Added Water Rating
                 f.comment or '',
                 f.status,
                 f.reviewed_by or 'N/A'
@@ -665,6 +686,7 @@ async def export_csv(
             output.seek(0)
             output.truncate(0)
 
+    filename_date = datetime.now().strftime('%Y%m%d%H%M%S')
     response = StreamingResponse(iter_csv(feedbacks), media_type="text/csv")
-    response.headers["Content-Disposition"] = f"attachment; filename=feedbacks_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
+    response.headers["Content-Disposition"] = f"attachment; filename=feedbacks_{filename_date}.csv"
     return response

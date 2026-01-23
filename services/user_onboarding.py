@@ -22,6 +22,16 @@ def process_ro_excel_upload(file_content: bytes, session: Session):
         df = pd.read_excel(io.BytesIO(file_content))
         # Normalize columns
         df.columns = [c.strip() for c in df.columns]
+        
+        # Handle column name variations - normalize to expected names
+        column_mappings = {
+            'CUSTCODE': 'RO Code',
+            'custcode': 'RO Code',
+        }
+        
+        # Apply column name mappings
+        df.rename(columns=column_mappings, inplace=True)
+        
     except Exception as e:
         return {"success": False, "error": f"Failed to parse Excel: {str(e)}"}
 
